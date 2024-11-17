@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sld>
+  <accelerator name="dfadd" desc="Accelerator DFADD" data_size="4" device_id="303" hls_tool="vivado_hls">
+    <param name="dfadd_n" desc="dfadd_n" />
+    <param name="dfadd_in" desc="dfadd_in" />
+    <param name="dfadd_out" desc="dfadd_out" />
+  </accelerator>
+</sld>

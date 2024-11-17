@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sld>
+  <accelerator name="dfsin" desc="Accelerator DFSIN" data_size="4" device_id="306" hls_tool="vivado_hls">
+    <param name="dfsin_n" desc="dfsin_n" />
+    <param name="dfsin_out" desc="dfsin_out" />
+    <param name="dfsin_in" desc="dfsin_in" />
+  </accelerator>
+</sld>

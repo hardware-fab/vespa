@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sld>
+  <accelerator name="gsm" desc="Accelerator GSM" data_size="4" device_id="307" hls_tool="vivado_hls">
+    <param name="gsm_n" desc="gsm_n" />
+    <param name="gsm_nlen" desc="gsm_nlen" />
+    <param name="gsm_mlen" desc="gsm_mlen" />
+  </accelerator>
+</sld>

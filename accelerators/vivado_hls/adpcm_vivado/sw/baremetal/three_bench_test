@@ -1,0 +1,779 @@
+// Copyright (c) 2011-2023 Columbia University, System Level Design Group
+// SPDX-License-Identifier: Apache-2.0
+
+/*#include <stdio.h>
+#include <uart.h>
+#include <float.h>
+
+#define BASE_ADDRESS 0x60000300
+#define TIMER_LO 0xB4
+#define TIMER_HI 0xB8
+
+#define CLOCK_PERIOD 20
+
+double custom_gettime_milli()
+{
+	volatile unsigned long timer_reg_lo, timer_reg_hi;
+	volatile uint32_t * timer_lo_ptr = (volatile uint32_t *)(BASE_ADDRESS + TIMER_LO);
+	volatile uint32_t * timer_hi_ptr = (volatile uint32_t *)(BASE_ADDRESS + TIMER_HI);
+	timer_reg_lo = *timer_lo_ptr;
+	timer_reg_hi = *timer_hi_ptr;
+	return (double) ((*timer_lo_ptr | (long unsigned)(*timer_hi_ptr)<<32)*CLOCK_PERIOD)/1000000;
+}
+int main(int argc, char **argv)
+{
+	//printf("Hello from ESP!\n");
+	//GM change: piccolo codice che stampa sulla uart a ripetizione
+	//init_uart();
+	//while(1)
+	printf("\n\nStart of the communication:\n\n");
+	printf("It seems that I need a longer line here, otherwise it cuts part of the important part of communication. This is a strange behaviour, indeed.\n\n");
+
+	//*test = 1;
+	//volatile uint32_t temp, temp2;
+	long unsigned time_millisec, start_time;
+	int i=0;
+	start_time = 0;
+	while(1)
+	{
+		//write_reg_u32_local((uintptr_t) test, 0x12345678);
+		//*test = 0x12345678;
+		//temp = read_reg_u32_local((uintptr_t) test);
+		//temp = *test;
+		//time_millisec = (long unsigned) ((*timer_lo_ptr | (long unsigned)(*timer_hi_ptr)<<32)*CLOCK_PERIOD)/1000000;
+		//printf("%d: lo=%u - hi=%u - time=%u\n", i, *timer_lo_ptr, *timer_hi_ptr, time_millisec) ;
+		if(custom_gettime_milli()-start_time>5000)
+		{
+			printf("Trascorsi 5 secondi...\n");
+			start_time = custom_gettime_milli();
+		}
+		//time_millisec=custom_gettime_milli();
+		//printf("%d\n", time_millisec);
+		//test++;
+		//i++;
+	}
+
+	return 0;
+}*/
+
+/* Copyright (c) 2011-2023 Columbia University, System Level Design Group */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+#include <stdio.h>
+#ifndef __riscv
+#include <stdlib.h>
+#endif
+
+#include "esp_accelerator.h"
+#include "esp_probe.h"
+#include "fixed_point.h"
+
+//#include "global.h"
+
+//---------------------Timer Definitions-----------------------------
+#define BASE_ADDRESS 0x60000300
+#define TIMER_LO 0xB4
+#define TIMER_HI 0xB8
+
+#define CLOCK_PERIOD 20
+#define MAX_TEST_TIME 6000000000
+
+static double start_time, time_elapsed, time_acc1, time_acc2, time_acc3;
+
+static long unsigned custom_gettime_nano()
+{
+	volatile unsigned long timer_reg_lo, timer_reg_hi;
+	volatile uint32_t * timer_lo_ptr = (volatile uint32_t *)(BASE_ADDRESS + TIMER_LO);
+	volatile uint32_t * timer_hi_ptr = (volatile uint32_t *)(BASE_ADDRESS + TIMER_HI);
+	timer_reg_lo = *timer_lo_ptr;
+	timer_reg_hi = *timer_hi_ptr;
+	return (long unsigned) ((*timer_lo_ptr | (long unsigned)(*timer_hi_ptr)<<32)*CLOCK_PERIOD);
+}
+
+static void print_time(long unsigned value)
+{
+	uint32_t nano = value%1000;
+	uint32_t micro = (value%1000000)/1000;
+	uint32_t milli = (value%1000000000)/1000000;
+	uint32_t sec = (value%1000000000000)/1000000000;
+	printf("Original Value = %lu : %u s - %u ms - %u us - %u ns", value, sec, milli, micro, nano);
+}
+
+static void print_time_us(long unsigned value)
+{
+	uint32_t decimal = value%1000;
+	uint32_t integer = (value)/1000;
+	printf("%u,%03u", integer, decimal);
+}
+
+//--------------Accelerators------------------------------
+typedef int32_t token1_t;
+typedef int64_t token2_t;
+typedef int16_t token3_t;
+
+static unsigned DMA_WORD_PER_BEAT(unsigned _st)
+{
+        return (sizeof(void *) / _st);
+}
+
+/* Size of the contiguous chunks for scatter/gather */
+#define CHUNK_SHIFT 20
+#define CHUNK_SIZE BIT(CHUNK_SHIFT)
+#define NCHUNK(_sz) ((_sz % CHUNK_SIZE == 0) ?		\
+			(_sz / CHUNK_SIZE) :		\
+			(_sz / CHUNK_SIZE) + 1)
+
+
+//---------------First Bench: ADPCM-----------------------
+#define SLD_ADPCM 0x300
+#define DEV_NAME_1 "sld,adpcm_vivado"
+
+/* <<--params-->> */
+const int32_t adpcm_n = 10;
+const int32_t adpcm_size = 2000;
+
+static unsigned in_words_adj_1;
+static unsigned out_words_adj_1;
+static unsigned in_len_1;
+static unsigned out_len_1;
+static unsigned in_size_1;
+static unsigned out_size_1;
+static unsigned out_offset_1;
+static unsigned mem_size_1;
+
+/* User defined registers */
+/* <<--regs-->> */
+#define ADPCM_ADPCM_N_REG 0x44
+#define ADPCM_ADPCM_SIZE_REG 0x40
+
+//---------------Second Bench: DFADD-----------------------
+#define SLD_DFADD 0x303
+#define DEV_NAME_2 "sld,dfadd_vivado"
+
+/* <<--params-->> */
+const int32_t dfadd_out = 1;
+const int32_t dfadd_in = 2;
+const int32_t dfadd_n = 100;
+
+static unsigned in_words_adj_2;
+static unsigned out_words_adj_2;
+static unsigned in_len_2;
+static unsigned out_len_2;
+static unsigned in_size_2;
+static unsigned out_size_2;
+static unsigned out_offset_2;
+static unsigned mem_size_2;
+
+/* User defined registers */
+/* <<--regs-->> */
+#define DFADD_DFADD_OUT_REG 0x48
+#define DFADD_DFADD_IN_REG 0x44
+#define DFADD_DFADD_N_REG 0x40
+
+//---------------Third Bench: GSM-----------------------
+#define SLD_GSM 0x307
+#define DEV_NAME_3 "sld,gsm_vivado"
+
+/* <<--params-->> */
+const int32_t gsm_mlen = 8;
+const int32_t gsm_nlen = 160;
+const int32_t gsm_n = 100;
+
+static unsigned in_words_adj_3;
+static unsigned out_words_adj_3;
+static unsigned in_len_3;
+static unsigned out_len_3;
+static unsigned in_size_3;
+static unsigned out_size_3;
+static unsigned out_offset_3;
+static unsigned mem_size_3;
+
+/* User defined registers */
+/* <<--regs-->> */
+#define GSM_GSM_MLEN_REG 0x48
+#define GSM_GSM_NLEN_REG 0x44
+#define GSM_GSM_N_REG 0x40
+
+#define N 160
+
+const short inData_gsm[N] =
+  { 81, 10854, 1893, -10291, 7614, 29718, 20475, -29215, -18949, -29806,
+  -32017, 1596, 15744, -3088, -17413, -22123, 6798, -13276, 3819, -16273,
+    -1573, -12523, -27103,
+  -193, -25588, 4698, -30436, 15264, -1393, 11418, 11370, 4986, 7869, -1903,
+    9123, -31726,
+  -25237, -14155, 17982, 32427, -12439, -15931, -21622, 7896, 1689, 28113,
+    3615, 22131, -5572,
+  -20110, 12387, 9177, -24544, 12480, 21546, -17842, -13645, 20277, 9987,
+    17652, -11464, -17326,
+  -10552, -27100, 207, 27612, 2517, 7167, -29734, -22441, 30039, -2368, 12813,
+    300, -25555, 9087,
+  29022, -6559, -20311, -14347, -7555, -21709, -3676, -30082, -3190, -30979,
+    8580, 27126, 3414,
+  -4603, -22303, -17143, 13788, -1096, -14617, 22071, -13552, 32646, 16689,
+    -8473, -12733, 10503,
+  20745, 6696, -26842, -31015, 3792, -19864, -20431, -30307, 32421, -13237,
+    9006, 18249, 2403,
+  -7996, -14827, -5860, 7122, 29817, -31894, 17955, 28836, -31297, 31821,
+    -27502, 12276, -5587,
+  -22105, 9192, -22549, 15675, -12265, 7212, -23749, -12856, -5857, 7521,
+    17349, 13773, -3091,
+  -17812, -9655, 26667, 7902, 2487, 3177, 29412, -20224, -2776, 24084, -7963,
+    -10438, -11938,
+  -14833, -6658, 32058, 4020, 10461, 15159
+};
+
+
+/*static int validate_buf(token_t *out, token_t *gold)
+{
+	int i;
+	int j;
+	unsigned errors = 0;
+
+	for (i = 0; i < adpcm_n; i++)
+		for (j = 0; j < adpcm_size; j++)
+			if (gold[i * out_words_adj + j] != out[i * out_words_adj + j])
+				errors++;
+
+	return errors;
+}*/
+
+//--------------Global Variables-----------------------
+
+int i;
+int n;
+int ndev;
+struct esp_device *espdevs;
+
+struct esp_device *dev1;
+struct esp_device *dev2;
+struct esp_device *dev3;
+
+unsigned done1, done2, done3;
+unsigned **ptable1;
+unsigned **ptable2;
+unsigned **ptable3;
+
+token1_t *mem1;
+token1_t *gold1;
+token2_t *mem2;
+token2_t *gold2;
+token3_t *mem3;
+token3_t *gold3;
+
+unsigned errors = 0;
+unsigned coherence;
+
+int ready1, ready2, ready3;
+int counter1, counter2, counter3;
+
+//--------------Functions Declaration------------------
+static void init_buf_adpcm (token1_t *in, token1_t * gold);
+static void init_buf_dfadd (token2_t *in, token2_t * gold);
+static void init_buf_gsm (token3_t *in, token3_t * gold);
+void init_size1();
+void init_size2();
+void init_size3();
+int init_dev1();
+int init_dev2();
+int init_dev3();
+void config_cache1();
+void config_cache2();
+void config_cache3();
+void run_acc1();
+void run_acc2();
+void run_acc3();
+
+int main(int argc, char * argv[])
+{
+	printf("------------------------------------------------------------------------------------------------------\n--------------------------------------------------------------------------------------------------------------------------------------\n--------------------------------------------------------------------------------------------------------------------------------------\n--------------------------------------------------------------------------------------------------------------------------------------\n-----------------------------------------------------------START-----------------------------------------------------------------------------------------------------------------------------------\n--------------------------------------------------------------------------------------------------------------------------------------\n--------------------------------------------------------------------------------------------------------------------------------------\n---------------------------------------------------------------------------------------------\n\n\n");
+
+
+	//initialize the size parameters
+	init_size1();
+	init_size2();
+	init_size3();
+
+	//Initialize the devices and the I/O buffers
+	init_dev1();
+	init_dev2();
+	init_dev3();
+
+
+	//Configure the cache
+	config_cache1();
+	config_cache2();
+	config_cache3();
+
+	//Initialize run control variables
+	counter1 = 0;
+	ready1 = 0;
+	done1 = 0;
+	counter2 = 0;
+	ready2 = 0;
+	done2 = 0;
+	counter3 = 0;
+	ready3 = 0;
+	done3 = 0;
+
+	start_time = custom_gettime_nano();
+
+	run_acc1();
+	run_acc2();
+	run_acc3();
+
+	while(!(ready1 && ready2 && ready3 && time_elapsed))
+	{
+		done1 = ioread32(dev1, STATUS_REG);
+		done1 &= STATUS_MASK_DONE;
+		if(done1 && !ready1)
+		{
+			done1 = 0;
+			iowrite32(dev1, CMD_REG, 0x0);
+			run_acc1();
+			counter1++;
+			if(time_elapsed)
+			{
+				time_acc1 = custom_gettime_nano() - start_time;
+				ready1 = 1;
+			}
+		}
+
+		done2 = ioread32(dev2, STATUS_REG);
+		done2 &= STATUS_MASK_DONE;
+		if(done2 && !ready2)
+		{
+			done2 = 0;
+			iowrite32(dev2, CMD_REG, 0x0);
+			run_acc2();
+			counter2++;
+			if(time_elapsed)
+			{
+				time_acc2 = custom_gettime_nano() - start_time;
+				ready2 = 1;
+			}
+		}
+
+		done3 = ioread32(dev3, STATUS_REG);
+		done3 &= STATUS_MASK_DONE;
+		if(done3 && !ready3)
+		{
+			done3 = 0;
+			iowrite32(dev3, CMD_REG, 0x0);
+			run_acc3();
+			counter3++;
+			if(time_elapsed)
+			{
+				printf("\ntime elapsed in gsm\n");
+				time_acc3 = custom_gettime_nano() - start_time;
+				ready3 = 1;
+			}
+		}
+
+		if(custom_gettime_nano() - start_time > MAX_TEST_TIME && !time_elapsed)
+			time_elapsed = 1;
+	}
+
+
+	/* Validation */
+	//errors = validate_buf(&mem[out_offset], gold);
+
+	printf("%d  %d  %d\n", counter1, counter2, counter3);
+	//Print out the performance results
+	printf("\nExecution time of adpcm = ");
+	print_time_us(time_acc1);///counter1);
+	printf("\nExecution time of dfadd = ");
+	print_time_us(time_acc2);///counter2);
+	printf("\nExecution time of gsm = ");
+	print_time_us(time_acc3);///counter3);
+
+	aligned_free(ptable1);
+	aligned_free(mem1);
+	aligned_free(gold1);
+	aligned_free(ptable2);
+	aligned_free(mem2);
+	aligned_free(gold2);
+	aligned_free(ptable3);
+	aligned_free(mem3);
+	aligned_free(gold3);
+
+
+	return 0;
+}
+
+//----------------------------Initialization Functions---------------------------
+
+static void init_buf_adpcm (token1_t *in, token1_t * gold)
+{
+	int i;
+	int j;
+
+	for (i = 0; i < adpcm_n; i++)
+		for (j = 0; j < adpcm_size; j++)
+			in[i * in_words_adj_1 + j] = (token1_t) j/3;
+}
+
+static void init_buf_dfadd (token2_t *in, token2_t * gold)
+{
+	int i;
+	int j;
+
+	for (i = 0; i < dfadd_n; i++)
+		for (j = 0; j < dfadd_in; j++)
+			in[i * in_words_adj_2 + j] = (token2_t)  j*1.57 + i*78.41 + 13.499;
+
+}
+
+static void init_buf_gsm (token3_t *in, token3_t * gold)
+{
+	int i;
+	int j;
+
+	for (i = 0; i < gsm_n; i++)
+		for (j = 0; j < gsm_nlen; j++)
+			in[i * in_words_adj_3 + j] = (token3_t) inData_gsm[j];
+}
+
+//---------------Initialization of size parameters------------
+void init_size1()
+{
+	if (DMA_WORD_PER_BEAT(sizeof(token1_t)) == 0) {
+		in_words_adj_1 = adpcm_size;
+		out_words_adj_1 = adpcm_size;
+	} else {
+		in_words_adj_1 = round_up(adpcm_size, DMA_WORD_PER_BEAT(sizeof(token1_t)));
+		out_words_adj_1 = round_up(adpcm_size, DMA_WORD_PER_BEAT(sizeof(token1_t)));
+	}
+	in_len_1 = in_words_adj_1 * (adpcm_n);
+	out_len_1 = out_words_adj_1 * (adpcm_n);
+	in_size_1 = in_len_1 * sizeof(token1_t);
+	out_size_1 = out_len_1 * sizeof(token1_t);
+	out_offset_1  = in_len_1;
+	mem_size_1 = (out_offset_1 * sizeof(token1_t)) + out_size_1;
+}
+
+void init_size2()
+{
+	if (DMA_WORD_PER_BEAT(sizeof(token2_t)) == 0) {
+		in_words_adj_2 = dfadd_in;
+		out_words_adj_2 = dfadd_out;
+	} else {
+		in_words_adj_2 = round_up(dfadd_in, DMA_WORD_PER_BEAT(sizeof(token2_t)));
+		out_words_adj_2 = round_up(dfadd_out, DMA_WORD_PER_BEAT(sizeof(token2_t)));
+	}
+	in_len_2 = in_words_adj_2 * (dfadd_n);
+	out_len_2 = out_words_adj_2 * (dfadd_n);
+	in_size_2 = in_len_2 * sizeof(token2_t);
+	out_size_2 = out_len_2 * sizeof(token2_t);
+	out_offset_2  = in_len_2;
+	mem_size_2 = (out_offset_2 * sizeof(token2_t)) + out_size_2;
+}
+
+void init_size3()
+{
+	if (DMA_WORD_PER_BEAT(sizeof(token3_t)) == 0) {
+		in_words_adj_3 = gsm_nlen;
+		out_words_adj_3 = gsm_nlen+gsm_mlen;
+	} else {
+		in_words_adj_3 = round_up(gsm_nlen, DMA_WORD_PER_BEAT(sizeof(token3_t)));
+		out_words_adj_3 = round_up(gsm_nlen+gsm_mlen, DMA_WORD_PER_BEAT(sizeof(token3_t)));
+	}
+	in_len_3 = in_words_adj_3 * (gsm_n);
+	out_len_3 = out_words_adj_3 * (gsm_n);
+	in_size_3= in_len_3 * sizeof(token3_t);
+	out_size_3 = out_len_3 * sizeof(token3_t);
+	out_offset_3  = in_len_3;
+	mem_size_3 = (out_offset_3 * sizeof(token3_t)) + out_size_3;
+}
+
+//---------------Initialization of the devices----------------
+int init_dev1()
+{
+	// Search for the device
+	printf("Scanning device tree... \n");
+
+	ndev = probe(&espdevs, VENDOR_SLD, SLD_ADPCM, DEV_NAME_1);
+	if (ndev == 0) {
+		//printf("adpcm not found\n");
+		return 0;
+	}
+
+	for (n = 0; n < ndev; n++) {
+
+		printf("**************** %s.%d ****************\n", DEV_NAME_1, n);
+
+		dev1 = &espdevs[n];
+
+		printf("\nDEVICE INFO\n\n");
+		printf("Vendor: %x\n", dev1->vendor);
+		printf("ID: %x\n", dev1->id);
+		printf("Number: %x\n", dev1->number);
+		printf("IRQ: %x\n", dev1->irq);
+		printf("Address: %llx\n", dev1->addr);
+		printf("Compat: %u\n", dev1->compat);
+		printf("Name: %s\n", dev1->name);
+
+		//printf("Checkpoint 1\n");
+
+		// Check DMA capabilities
+		if (ioread32(dev1, PT_NCHUNK_MAX_REG) == 0)
+		{
+			printf("  -> scatter-gather DMA is disabled. Abort.\n");
+			return 0;
+		}
+
+		printf("Checkpoint 2\n");
+
+		if (ioread32(dev1, PT_NCHUNK_MAX_REG) < NCHUNK(mem_size_1)) {
+			printf("  -> Not enough TLB entries available. Abort.\n");
+			return 0;
+		}
+
+		printf("Checkpoint 3\n");
+
+		// Allocate memory
+		gold1 = aligned_malloc(out_size_1);
+		mem1 = aligned_malloc(mem_size_1);
+		printf("  memory buffer base-address = %p\n", mem1);
+
+		// Alocate and populate page table
+		ptable1 = aligned_malloc(NCHUNK(mem_size_1) * sizeof(unsigned *));
+		for (i = 0; i < NCHUNK(mem_size_1); i++)
+			ptable1[i] = (unsigned *) &mem1[i * (CHUNK_SIZE / sizeof(token1_t))];
+
+		printf("  ptable = %p\n", ptable1);
+		printf("  nchunk = %lu\n", NCHUNK(mem_size_1));
+	}
+}
+
+int init_dev2()
+{
+	// Search for the device
+	printf("Scanning device tree... \n");
+
+	ndev = probe(&espdevs, VENDOR_SLD, SLD_DFADD, DEV_NAME_2);
+	if (ndev == 0) {
+		printf("dfadd not found\n");
+		return 0;
+	}
+
+
+	for (n = 0; n < ndev; n++) {
+
+		printf("**************** %s.%d ****************\n", DEV_NAME_2, n);
+
+		dev2 = &espdevs[n];
+
+		printf("\nDEVICE INFO\n\n");
+		printf("Vendor: %x\n", dev2->vendor);
+		printf("ID: %x\n", dev2->id);
+		printf("Number: %x\n", dev2->number);
+		printf("IRQ: %x\n", dev2->irq);
+		printf("Address: %llx\n", dev2->addr);
+		printf("Compat: %u\n", dev2->compat);
+		printf("Name: %s\n", dev2->name);
+
+		// Check DMA capabilities
+		if (ioread32(dev2, PT_NCHUNK_MAX_REG) == 0) {
+			printf("  -> scatter-gather DMA is disabled. Abort.\n");
+			return 0;
+		}
+
+		if (ioread32(dev2, PT_NCHUNK_MAX_REG) < NCHUNK(mem_size_2)) {
+			printf("  -> Not enough TLB entries available. Abort.\n");
+			return 0;
+		}
+
+		// Allocate memory
+		gold2 = aligned_malloc(out_size_2);
+		mem2 = aligned_malloc(mem_size_2);
+		printf("  memory buffer base-address = %p\n", mem2);
+
+		// Alocate and populate page table
+		ptable2 = aligned_malloc(NCHUNK(mem_size_2) * sizeof(unsigned *));
+		for (i = 0; i < NCHUNK(mem_size_2); i++)
+			ptable2[i] = (unsigned *) &mem2[i * (CHUNK_SIZE / sizeof(token2_t))];
+
+		printf("  ptable = %p\n", ptable2);
+		printf("  nchunk = %lu\n", NCHUNK(mem_size_2));
+	}
+}
+
+int init_dev3()
+{
+	// Search for the device
+	printf("Scanning device tree... \n");
+
+	ndev = probe(&espdevs, VENDOR_SLD, SLD_GSM, DEV_NAME_3);
+	if (ndev == 0) {
+		printf("gsm not found\n");
+		return 0;
+	}
+
+	for (n = 0; n < ndev; n++) {
+
+		printf("**************** %s.%d ****************\n", DEV_NAME_3, n);
+
+		dev3 = &espdevs[n];
+
+		printf("\nDEVICE INFO\n\n");
+		printf("Vendor: %x\n", dev3->vendor);
+		printf("ID: %x\n", dev3->id);
+		printf("Number: %x\n", dev3->number);
+		printf("IRQ: %x\n", dev3->irq);
+		printf("Address: %llx\n", dev3->addr);
+		printf("Compat: %u\n", dev3->compat);
+		printf("Name: %s\n", dev3->name);
+
+		// Check DMA capabilities
+		if (ioread32(dev3, PT_NCHUNK_MAX_REG) == 0) {
+			printf("  -> scatter-gather DMA is disabled. Abort.\n");
+			return 0;
+		}
+
+		if (ioread32(dev3, PT_NCHUNK_MAX_REG) < NCHUNK(mem_size_3)) {
+			printf("  -> Not enough TLB entries available. Abort.\n");
+			return 0;
+		}
+
+		// Allocate memory
+		gold3 = aligned_malloc(out_size_3);
+		mem3 = aligned_malloc(mem_size_3);
+		printf("  memory buffer base-address = %p\n", mem3);
+
+		// Alocate and populate page table
+		ptable3 = aligned_malloc(NCHUNK(mem_size_3) * sizeof(unsigned *));
+		for (i = 0; i < NCHUNK(mem_size_3); i++)
+			ptable3[i] = (unsigned *) &mem3[i * (CHUNK_SIZE / sizeof(token3_t))];
+
+		printf("  ptable = %p\n", ptable3);
+		printf("  nchunk = %lu\n", NCHUNK(mem_size_3));
+	}
+}
+
+//---------------Cache configuration functions----------------
+void config_cache1()
+{
+	/* TODO: Restore full test once ESP caches are integrated */
+	coherence = ACC_COH_NONE;
+	printf("  --------------------\n");
+	printf("  Generate input...\n");
+	init_buf_adpcm(mem1, gold1);
+
+	// Pass common configuration parameters
+
+	iowrite32(dev1, SELECT_REG, ioread32(dev1, DEVID_REG));
+	iowrite32(dev1, COHERENCE_REG, coherence);
+
+#ifndef __sparc
+	iowrite32(dev1, PT_ADDRESS_REG, (unsigned long long) ptable1);
+#else
+	iowrite32(dev1, PT_ADDRESS_REG, (unsigned) ptable1);
+#endif
+	iowrite32(dev1, PT_NCHUNK_REG, NCHUNK(mem_size_1));
+	iowrite32(dev1, PT_SHIFT_REG, CHUNK_SHIFT);
+
+	// Use the following if input and output data are not allocated at the default offsets
+	iowrite32(dev1, SRC_OFFSET_REG, 0x0);
+	iowrite32(dev1, DST_OFFSET_REG, 0x0);
+
+	// Pass accelerator-specific configuration parameters
+	/* <<--regs-config-->> */
+	iowrite32(dev1, ADPCM_ADPCM_N_REG, adpcm_n);
+	iowrite32(dev1, ADPCM_ADPCM_SIZE_REG, adpcm_size);
+
+	// Flush (customize coherence model here)
+	esp_flush(coherence);
+}
+
+void config_cache2()
+{
+	/* TODO: Restore full test once ESP caches are integrated */
+	coherence = ACC_COH_NONE;
+	printf("  --------------------\n");
+	printf("  Generate input...\n");
+	init_buf_dfadd(mem2, gold2);
+
+	// Pass common configuration parameters
+
+	iowrite32(dev2, SELECT_REG, ioread32(dev2, DEVID_REG));
+	iowrite32(dev2, COHERENCE_REG, coherence);
+
+#ifndef __sparc
+	iowrite32(dev2, PT_ADDRESS_REG, (unsigned long long) ptable2);
+#else
+	iowrite32(dev2, PT_ADDRESS_REG, (unsigned) ptable2);
+#endif
+	iowrite32(dev2, PT_NCHUNK_REG, NCHUNK(mem_size_2));
+	iowrite32(dev2, PT_SHIFT_REG, CHUNK_SHIFT);
+
+	// Use the following if input and output data are not allocated at the default offsets
+	iowrite32(dev2, SRC_OFFSET_REG, 0x0);
+	iowrite32(dev2, DST_OFFSET_REG, 0x0);
+
+	// Pass accelerator-specific configuration parameters
+	/* <<--regs-config-->> */
+	iowrite32(dev2, DFADD_DFADD_OUT_REG, dfadd_out);
+	iowrite32(dev2, DFADD_DFADD_IN_REG, dfadd_in);
+	iowrite32(dev2, DFADD_DFADD_N_REG, dfadd_n);
+
+	// Flush (customize coherence model here)
+	esp_flush(coherence);
+}
+
+void config_cache3()
+{
+	/* TODO: Restore full test once ESP caches are integrated */
+	coherence = ACC_COH_NONE;
+	printf("  --------------------\n");
+	printf("  Generate input...\n");
+	init_buf_gsm(mem3, gold3);
+
+	// Pass common configuration parameters
+
+	iowrite32(dev3, SELECT_REG, ioread32(dev3, DEVID_REG));
+	iowrite32(dev3, COHERENCE_REG, coherence);
+
+#ifndef __sparc
+	iowrite32(dev3, PT_ADDRESS_REG, (unsigned long long) ptable3);
+#else
+	iowrite32(dev3, PT_ADDRESS_REG, (unsigned) ptable3);
+#endif
+	iowrite32(dev3, PT_NCHUNK_REG, NCHUNK(mem_size_3));
+	iowrite32(dev3, PT_SHIFT_REG, CHUNK_SHIFT);
+
+	// Use the following if input and output data are not allocated at the default offsets
+	iowrite32(dev3, SRC_OFFSET_REG, 0x0);
+	iowrite32(dev3, DST_OFFSET_REG, 0x0);
+
+	// Pass accelerator-specific configuration parameters
+	/* <<--regs-config-->> */
+	iowrite32(dev3, GSM_GSM_MLEN_REG, gsm_mlen);
+	iowrite32(dev3, GSM_GSM_NLEN_REG, gsm_nlen);
+	iowrite32(dev3, GSM_GSM_N_REG, gsm_n);
+
+	// Flush (customize coherence model here)
+	esp_flush(coherence);
+}
+
+//------------------Starting Functions
+void run_acc1()
+{
+	// Start accelerators
+	//printf("  Start...\n");
+	iowrite32(dev1, CMD_REG, CMD_MASK_START);
+}
+
+void run_acc2()
+{
+	// Start accelerators
+	//printf("  Start...\n");
+	iowrite32(dev2, CMD_REG, CMD_MASK_START);
+}
+
+void run_acc3()
+{
+	// Start accelerators
+	//printf("  Start...\n");
+	iowrite32(dev3, CMD_REG, CMD_MASK_START);
+}

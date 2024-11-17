@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sld>
+  <accelerator name="adpcm" desc="Accelerator ADPCM" data_size="4" device_id="300" hls_tool="vivado_hls">
+    <param name="adpcm_size" desc="adpcm_size" />
+    <param name="adpcm_n" desc="adpcm_n" />
+  </accelerator>
+</sld>

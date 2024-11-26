@@ -1,17 +1,20 @@
 VESPA is an open-source system-on-chip (SoC) prototyping platform.
 It is based on a 2D-mesh network-on-chip (NoC). There are four types
-of tiles: CPU, MEM, IO, and ACC. For more detailed information regarding
-this tool, please refer to the overview paper. To use this tool,
+of tiles: CPU, MEM, IO, and ACC. To use this tool,
 take a look to the TUTORIAL.md file in the main repository folder.
 
-## Publications
-
-Overview paper:
-
-> Gabriele Montanaro, Andrea Galimberti, Davide Zoni.
-> _"A Prototype-Based Framework to Design Scalable
-> Heterogeneous SoCs with Fine-Grained DFS."_ IEEE International
-> Conference on Computer Design (ICCD), 2024.
+For more details, please see our [ICCD'24 paper](https://arxiv.org/abs/2411.15574):
+```bibtex
+@misc{Montanaro_2024ICCD,
+      title={A Prototype-Based Framework to Design Scalable Heterogeneous SoCs with Fine-Grained DFS}, 
+      author={Gabriele Montanaro and Andrea Galimberti and Davide Zoni},
+      year={2024},
+      eprint={2411.15574},
+      archivePrefix={arXiv},
+      primaryClass={cs.AR},
+      url={https://arxiv.org/abs/2411.15574}, 
+}
+```
 
 ## Repository organization
 
